@@ -5,6 +5,7 @@ import 'package:ai_teacher/http/model/student_list_entity.dart';
 import 'package:ai_teacher/manager/user_manager.dart';
 import 'package:ai_teacher/pages/dialog/class_selection_dialog.dart';
 import 'package:ai_teacher/pages/login_page.dart';
+import 'package:ai_teacher/pages/student_detail_page.dart';
 import 'package:ai_teacher/util/sp_util.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -71,10 +72,7 @@ class _ClassPageState extends State<ClassPage> {
       if (mounted) {
         if (e is HttpException) {
           setState(() {
-            _showState = ShowNetworkErrorView(
-              e.code ?? -1,
-              e.message ?? '网络异常',
-            );
+            _showState = ShowNetworkErrorView(e.code, e.message ?? '网络异常');
           });
         } else {
           setState(() {
@@ -175,51 +173,60 @@ class _ClassPageState extends State<ClassPage> {
         ),
         itemBuilder: (context, index) {
           final item = _studentList![index];
-          return Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                // 头像
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(40),
-                  child: CachedNetworkImage(
-                    imageUrl: item.studentAvatar ?? "",
-                    width: 56,
-                    height: 56,
-                    maxHeightDiskCache: 300,
-                    maxWidthDiskCache: 300,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => Image.asset(
-                      'assets/images/avatar.png',
+          return GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => StudentDetailPage(student: item),
+                ),
+              );
+            },
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  // 头像
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(40),
+                    child: CachedNetworkImage(
+                      imageUrl: item.studentAvatar ?? "",
                       width: 56,
                       height: 56,
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Color(0xFF7EA1FF),
-                      ),
-                      child: Image.asset(
+                      maxHeightDiskCache: 300,
+                      maxWidthDiskCache: 300,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Image.asset(
                         'assets/images/avatar.png',
                         width: 56,
                         height: 56,
                       ),
+                      errorWidget: (context, url, error) => Container(
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color(0xFF7EA1FF),
+                        ),
+                        child: Image.asset(
+                          'assets/images/avatar.png',
+                          width: 56,
+                          height: 56,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
+                  const SizedBox(width: 12),
 
-                // 姓名
-                Text(
-                  item.studentName ?? '未知',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    color: Color(0xFF333333),
-                    fontWeight: FontWeight.w500,
+                  // 姓名
+                  Text(
+                    item.studentName,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Color(0xFF333333),
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },

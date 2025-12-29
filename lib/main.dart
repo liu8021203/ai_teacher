@@ -2,12 +2,14 @@ import 'package:ai_teacher/manager/user_manager.dart';
 import 'package:ai_teacher/pages/main_page.dart';
 import 'package:ai_teacher/util/sp_util.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:loader_overlay/loader_overlay.dart';
 import 'pages/login_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SPUtil.initSharedPreferences();
+  await initializeDateFormatting('zh_CN');
   runApp(const MyApp());
 }
 

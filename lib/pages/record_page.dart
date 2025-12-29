@@ -2,10 +2,13 @@ import 'dart:io';
 import 'package:ai_teacher/base/base_stateful_widget.dart';
 import 'package:ai_teacher/http/core/dio_client.dart';
 import 'package:ai_teacher/http/exception/http_exception.dart';
+import 'package:ai_teacher/http/model/student_data_confirm_list_entity.dart';
 import 'package:ai_teacher/http/model/student_list_entity.dart';
 import 'package:ai_teacher/manager/user_manager.dart';
+import 'package:ai_teacher/pages/dialog/student_data_confirm_dialog.dart';
 import 'package:ai_teacher/util/app_util.dart';
 import 'package:ai_teacher/util/sp_util.dart';
+import 'package:badges/badges.dart' as badges;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -31,10 +34,16 @@ class _RecordPageState extends State<RecordPage> {
   bool _isRecording = false;
   String? _recordedFilePath;
 
+  // 未读数据相关
+  List<StudentDataConfirmListEntity> _unreadDataList = [];
+  Map<int, int> _studentUnreadCount = {}; // 学生ID -> 未读数量
+  int _unknownUnreadCount = 0; // 未知条目的未读数量
+
   @override
   void initState() {
     super.initState();
     _fetchStudentList();
+    _fetchUnreadData();
   }
 
   @override
@@ -96,22 +105,111 @@ class _RecordPageState extends State<RecordPage> {
     }
   }
 
-  Future<bool> _requestPermission() async {
-    final status = await Permission.microphone.request();
-    return status.isGranted;
+  Future<void> _fetchUnreadData() async {
+    try {
+      final String? classId = SPUtil.getString('classId', defaultValue: null);
+      if (classId == null) {
+        return;
+      }
+
+      List<StudentDataConfirmListEntity>? list = await DioClient()
+          .post<List<StudentDataConfirmListEntity>>(
+            '/getStudentDataToBeConfirmed',
+            data: {'classId': classId},
+            fromJson: (json) {
+              if (json is List) {
+                return json
+                    .map((e) => StudentDataConfirmListEntity.fromJson(e))
+                    .toList();
+              }
+              return null;
+            },
+          );
+
+      if (mounted && list != null) {
+        setState(() {
+          _unreadDataList = list;
+          _calculateUnreadCounts();
+        });
+      }
+    } catch (e) {
+      debugPrint('获取未读数据失败: $e');
+    }
+  }
+
+  void _calculateUnreadCounts() {
+    _studentUnreadCount.clear();
+    _unknownUnreadCount = 0;
+
+    for (var item in _unreadDataList) {
+      if (item.studentId == null || item.studentId == 0) {
+        // studentId 为 null 或 0 的归为未知条目
+        _unknownUnreadCount++;
+      } else {
+        // 统计每个学生的未读数量
+        _studentUnreadCount[item.studentId!] =
+            (_studentUnreadCount[item.studentId!] ?? 0) + 1;
+      }
+    }
+  }
+
+  void _onStudentTap(int studentId, StudentListEntity? student) {
+    // 获取该学生的未读数据
+    List<StudentDataConfirmListEntity> studentDataList = [];
+
+    if (studentId == 0) {
+      // 未知条目
+      studentDataList = _unreadDataList
+          .where((item) => item.studentId == null || item.studentId == 0)
+          .toList();
+    } else {
+      // 普通学生
+      studentDataList = _unreadDataList
+          .where((item) => item.studentId == studentId)
+          .toList();
+    }
+
+    if (studentDataList.isEmpty) {
+      // 没有未读数据，不弹出Dialog
+      return;
+    }
+
+    // 显示Dialog
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) =>
+          StudentDataConfirmDialog(student: student, dataList: studentDataList),
+    ).then((result) {
+      if (result == true) {
+        // 刷新未读数据
+        _fetchUnreadData();
+      }
+    });
   }
 
   Future<void> _startRecording() async {
     if (_isRecording) return;
 
-    final hasPermission = await _requestPermission();
-    if (!hasPermission) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('需要麦克风权限才能录音')));
+    // 检查是否已有权限
+    final currentStatus = await Permission.microphone.status;
+
+    // 如果没有权限，先请求权限
+    if (!currentStatus.isGranted) {
+      final status = await Permission.microphone.request();
+      if (!status.isGranted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('需要麦克风权限才能录音')));
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('已授予麦克风权限，请再次长按开始录音')));
+      }
       return;
     }
 
+    // 已有权限，开始录音
     try {
       final directory = await getTemporaryDirectory();
       final filePath =
@@ -175,11 +273,13 @@ class _RecordPageState extends State<RecordPage> {
         filePath,
         filename: 'audio.m4a',
       );
+      final String? classId = SPUtil.getString('classId', defaultValue: null);
 
       await DioClient().post(
         '/aiAnalyzeRecordAudio',
         data: FormData.fromMap({
           'token': UserManager().getUserInfo()?.token,
+          'classId': classId,
           'audioFile': audioFile,
         }),
         fromJson: (json) => json,
@@ -254,7 +354,8 @@ class _RecordPageState extends State<RecordPage> {
           TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
         ) +
         _studentWidth +
-        6;
+        6 +
+        8;
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -275,55 +376,105 @@ class _RecordPageState extends State<RecordPage> {
               padding: EdgeInsets.symmetric(horizontal: 16),
               scrollDirection: Axis.horizontal,
               itemBuilder: (context, index) {
-                return Column(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(40),
-                      child: CachedNetworkImage(
-                        imageUrl: _studentList![index].studentAvatar ?? "",
+                // 判断是否是最后一个（未知条目）
+                final isUnknown = index == (_studentList?.length ?? 0);
+                final studentId = isUnknown ? 0 : _studentList![index].id;
+                final unreadCount = isUnknown
+                    ? _unknownUnreadCount
+                    : (_studentUnreadCount[studentId] ?? 0);
+
+                return GestureDetector(
+                  onTap: () {
+                    if (unreadCount > 0) {
+                      _onStudentTap(
+                        studentId,
+                        isUnknown ? null : _studentList![index],
+                      );
+                    }
+                  },
+                  child: Column(
+                    children: [
+                      badges.Badge(
+                        position: badges.BadgePosition.bottomEnd(
+                          bottom: -10,
+                          end: -3,
+                        ),
+                        showBadge: unreadCount > 0,
+                        ignorePointer: false,
+                        onTap: () {},
+                        badgeContent: Text(
+                          '$unreadCount',
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                        badgeStyle: badges.BadgeStyle(
+                          shape: badges.BadgeShape.circle,
+                          badgeColor: Colors.red,
+                          padding: EdgeInsets.all(5),
+                          borderSide: BorderSide(color: Colors.white, width: 2),
+                          elevation: 0,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(40),
+                          child: isUnknown
+                              ? Container(
+                                  width: _studentWidth,
+                                  height: _studentWidth,
+                                  color: Colors.grey.shade300,
+                                  child: Icon(
+                                    Icons.help_outline,
+                                    size: 40,
+                                    color: Colors.grey,
+                                  ),
+                                )
+                              : CachedNetworkImage(
+                                  imageUrl:
+                                      _studentList![index].studentAvatar ?? "",
+                                  width: _studentWidth,
+                                  height: _studentWidth,
+                                  maxHeightDiskCache: 300,
+                                  maxWidthDiskCache: 300,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(
+                                    color: Colors.grey.shade300,
+                                    child: Icon(
+                                      Icons.person,
+                                      size: 40,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                  errorWidget: (context, url, error) =>
+                                      Container(
+                                        color: Colors.grey.shade300,
+                                        child: Icon(
+                                          Icons.person,
+                                          size: 40,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                ),
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Container(
                         width: _studentWidth,
-                        height: _studentWidth,
-                        maxHeightDiskCache: 300,
-                        maxWidthDiskCache: 300,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          color: Colors.grey.shade300,
-                          child: Icon(
-                            Icons.person,
-                            size: 40,
-                            color: Colors.grey,
-                          ),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          color: Colors.grey.shade300,
-                          child: Icon(
-                            Icons.person,
-                            size: 40,
-                            color: Colors.grey,
+                        alignment: Alignment.center,
+                        child: Text(
+                          isUnknown ? '未知' : _studentList![index].studentName,
+                          style: TextStyle(
+                            overflow: TextOverflow.ellipsis,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
-                    ),
-                    SizedBox(height: 4),
-                    Container(
-                      width: _studentWidth,
-                      alignment: Alignment.center,
-                      child: Text(
-                        _studentList![index].studentName,
-                        style: TextStyle(
-                          overflow: TextOverflow.ellipsis,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 );
               },
               separatorBuilder: (context, index) {
                 return SizedBox(width: 12);
               },
-              itemCount: _studentList?.length ?? 0,
+              itemCount: (_studentList?.length ?? 0) + 1, // +1 为未知条目
             ),
           ),
 

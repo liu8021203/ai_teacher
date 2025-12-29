@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>需要录音权限才能进行观察记录</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>需要相册权限上传学生照片</string>
 	<key>CFBundleDevelopmentRegion</key>
