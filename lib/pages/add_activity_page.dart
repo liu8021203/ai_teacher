@@ -27,10 +27,10 @@ class _AddActivityPageState extends State<AddActivityPage> {
   final TextEditingController _errorControlController = TextEditingController();
   final TextEditingController _followUpWorkController = TextEditingController();
   final TextEditingController _remarksController = TextEditingController();
-  
+  final TextEditingController _practiseController = TextEditingController();
+
   // 练习与目的的关系控制器列表
-  List<TextEditingController> _relationControllers = [TextEditingController()];
-  
+
   String? _imageUrl; // 上传后的图片URL
   File? _localImageFile; // 本地选择的图片文件
   String _selectedAgeRange = 'CASA'; // 选中的年龄段
@@ -43,9 +43,7 @@ class _AddActivityPageState extends State<AddActivityPage> {
     _errorControlController.dispose();
     _followUpWorkController.dispose();
     _remarksController.dispose();
-    for (var controller in _relationControllers) {
-      controller.dispose();
-    }
+    _practiseController.dispose();
     super.dispose();
   }
 
@@ -76,14 +74,15 @@ class _AddActivityPageState extends State<AddActivityPage> {
 
       if (fileSizeMB > 2) {
         final directory = await getTemporaryDirectory();
-        final compressPath = '${directory.path}/compress_${DateTime.now().millisecondsSinceEpoch}$extension';
-        
+        final compressPath =
+            '${directory.path}/compress_${DateTime.now().millisecondsSinceEpoch}$extension';
+
         var result = await FlutterImageCompress.compressAndGetFile(
           imageFile.path,
           compressPath,
           quality: (150 / fileSizeMB).toInt(),
         );
-        
+
         filePath = result?.path ?? imageFile.path;
       }
 
@@ -93,9 +92,7 @@ class _AddActivityPageState extends State<AddActivityPage> {
         filename: "activity_image.jpg",
       );
 
-      FormData formData = FormData.fromMap({
-        'image': file,
-      });
+      FormData formData = FormData.fromMap({'image': file});
 
       // 调用上传接口
       String? imageUrl = await DioClient().post<String>(
@@ -124,13 +121,6 @@ class _AddActivityPageState extends State<AddActivityPage> {
     }
   }
 
-  // 添加更多练习与目的关系输入框
-  void _addRelationField() {
-    setState(() {
-      _relationControllers.add(TextEditingController());
-    });
-  }
-
   // 保存活动
   Future<void> _saveActivity() async {
     // 验证必填项
@@ -141,12 +131,6 @@ class _AddActivityPageState extends State<AddActivityPage> {
 
     try {
       context.loaderOverlay.show();
-
-      // 收集所有练习与目的关系的输入
-      List<String> relations = _relationControllers
-          .map((controller) => controller.text.trim())
-          .where((text) => text.isNotEmpty)
-          .toList();
 
       Map<String, dynamic> data = {
         'token': UserManager().getUserInfo()?.token,
@@ -166,9 +150,7 @@ class _AddActivityPageState extends State<AddActivityPage> {
       if (_indirectGoalController.text.trim().isNotEmpty) {
         data['indirectGoal'] = _indirectGoalController.text.trim();
       }
-      if (relations.isNotEmpty) {
-        data['relations'] = relations.join('\n');
-      }
+
       if (_errorControlController.text.trim().isNotEmpty) {
         data['errorControl'] = _errorControlController.text.trim();
       }
@@ -177,6 +159,9 @@ class _AddActivityPageState extends State<AddActivityPage> {
       }
       if (_remarksController.text.trim().isNotEmpty) {
         data['remarks'] = _remarksController.text.trim();
+      }
+      if (_practiseController.text.trim().isNotEmpty) {
+        data['practise'] = _practiseController.text.trim();
       }
 
       await DioClient().post(
@@ -188,7 +173,8 @@ class _AddActivityPageState extends State<AddActivityPage> {
       if (mounted) {
         context.loaderOverlay.hide();
         Fluttertoast.showToast(msg: '添加成功');
-        Navigator.of(context).pop(true); // 返回并传递成功标记
+        // 返回新添加的活动名称
+        Navigator.of(context).pop(_nameController.text.trim());
       }
     } catch (e) {
       if (mounted) {
@@ -224,12 +210,7 @@ class _AddActivityPageState extends State<AddActivityPage> {
                 ),
               ),
               const Divider(height: 1),
-              ...[
-                'CASA',
-                'IC',
-                'JUNIOR',
-                'SENIOR',
-              ].map((age) {
+              ...['CASA', 'IC', 'JUNIOR', 'SENIOR'].map((age) {
                 return ListTile(
                   title: Text(
                     age,
@@ -298,56 +279,79 @@ class _AddActivityPageState extends State<AddActivityPage> {
                     children: [
                       _buildRequiredLabel('活动名称'),
                       const SizedBox(width: 12),
-                      Expanded(child: TextField(
-                        controller: _nameController,
-                        decoration: const InputDecoration(
-                          filled: true,
-                          fillColor: Colors.white,
-                          hintText: '请输入活动名称',
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          isDense: true,
+                      Expanded(
+                        child: TextField(
+                          controller: _nameController,
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide.none,
+                            ),
+                            // hintText: '请输入活动名称',
+                            // border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 6,
+                            ),
+                            isDense: true,
+                          ),
                         ),
-                      ))
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
                   // 活动图片
-                  const Text(
-                    '活动图片',
-                    style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
-                  ),
-                  const SizedBox(height: 12),
-                  GestureDetector(
-                    onTap: _pickImage,
-                    child: Container(
-                      width: 120,
-                      height: 120,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFFDDDDDD),
-                          width: 1,
-                          style: BorderStyle.solid,
+                  Row(
+                    children: [
+                      const Text(
+                        '*',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.transparent,
                         ),
                       ),
-                      child: _localImageFile != null
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.file(
-                                _localImageFile!,
-                                fit: BoxFit.cover,
-                              ),
-                            )
-                          : const Center(
-                              child: Icon(
-                                Icons.add,
-                                size: 48,
-                                color: Color(0xFFCCCCCC),
-                              ),
+                      const Text(
+                        '活动图片',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF666666),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      GestureDetector(
+                        onTap: _pickImage,
+                        child: Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: const Color(0xFFE3E3E3),
+                              width: 1,
+                              style: BorderStyle.solid,
                             ),
-                    ),
+                          ),
+                          child: _localImageFile != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    _localImageFile!,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              : const Center(
+                                  child: Icon(
+                                    Icons.add,
+                                    size: 48,
+                                    color: Color(0xFFE3E3E3),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -416,32 +420,8 @@ class _AddActivityPageState extends State<AddActivityPage> {
                     style: TextStyle(fontSize: 14, color: Color(0xFF2E2E2E)),
                   ),
                   const SizedBox(height: 8),
-                  // 动态生成的关系输入框
-                  ..._relationControllers.asMap().entries.map((entry) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _buildMultilineTextField(entry.value, '请简单描述'),
-                    );
-                  }).toList(),
-                  // 添加按钮
-                  Center(
-                    child: GestureDetector(
-                      onTap: _addRelationField,
-                      child: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF5F5F5),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.add,
-                          color: Color(0xFF999999),
-                          size: 20,
-                        ),
-                      ),
-                    ),
-                  ),
+
+                  _buildMultilineTextField(_practiseController, '请简单描述'),
                 ],
               ),
             ),
@@ -524,10 +504,7 @@ class _AddActivityPageState extends State<AddActivityPage> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          '*',
-          style: TextStyle(fontSize: 14, color: Colors.red),
-        ),
+        const Text('*', style: TextStyle(fontSize: 14, color: Colors.red)),
         Text(
           text,
           style: const TextStyle(fontSize: 14, color: Color(0xFF2E2E2E)),
@@ -561,4 +538,3 @@ class _AddActivityPageState extends State<AddActivityPage> {
     );
   }
 }
-

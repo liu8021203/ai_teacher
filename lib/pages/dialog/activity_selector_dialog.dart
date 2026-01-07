@@ -2,6 +2,7 @@ import 'package:ai_teacher/http/core/dio_client.dart';
 import 'package:ai_teacher/http/exception/http_exception.dart';
 import 'package:ai_teacher/http/model/activity_list_entity.dart';
 import 'package:ai_teacher/manager/user_manager.dart';
+import 'package:ai_teacher/pages/add_activity_page.dart';
 import 'package:flutter/material.dart';
 
 class ActivitySelectorDialog extends StatefulWidget {
@@ -71,7 +72,7 @@ class _ActivitySelectorDialogState extends State<ActivitySelectorDialog>
           _categories = _allActivities
               .where((item) => item.parentId == null)
               .toList();
-          
+
           // 初始化 TabController
           if (_categories.isNotEmpty) {
             _tabController = TabController(
@@ -79,7 +80,7 @@ class _ActivitySelectorDialogState extends State<ActivitySelectorDialog>
               vsync: this,
             );
           }
-          
+
           _isLoading = false;
         });
       }
@@ -139,9 +140,7 @@ class _ActivitySelectorDialogState extends State<ActivitySelectorDialog>
           ),
 
           // 内容区域
-          Expanded(
-            child: _buildContent(),
-          ),
+          Expanded(child: _buildContent()),
         ],
       ),
     );
@@ -149,9 +148,7 @@ class _ActivitySelectorDialogState extends State<ActivitySelectorDialog>
 
   Widget _buildContent() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_errorMessage != null) {
@@ -232,22 +229,19 @@ class _ActivitySelectorDialogState extends State<ActivitySelectorDialog>
   Widget _buildActivityList(int categoryId) {
     final activities = _getCategoryActivities(categoryId);
 
-    if (activities.isEmpty) {
-      return const Center(
-        child: Text(
-          '该分类下暂无活动',
-          style: TextStyle(fontSize: 14, color: Color(0xFF999999)),
-        ),
-      );
-    }
-
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: activities.length,
+      itemCount: activities.length + 1, // +1 为添加新活动按钮
       itemBuilder: (context, index) {
+        // 最后一项是"添加新活动"按钮
+        if (index == activities.length) {
+          return _buildAddActivityItem(categoryId);
+        }
+
         final activity = activities[index];
-        final isSelected = widget.selectedActivityTitle == activity.categoryTitle;
-        
+        final isSelected =
+            widget.selectedActivityTitle == activity.categoryTitle;
+
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
@@ -283,5 +277,64 @@ class _ActivitySelectorDialogState extends State<ActivitySelectorDialog>
       },
     );
   }
-}
 
+  // 构建"添加新活动"选项
+  Widget _buildAddActivityItem(int categoryId) {
+    return GestureDetector(
+      onTap: () => _addNewActivity(categoryId),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF82A6F5), width: 1.5),
+        ),
+        child: ListTile(
+          leading: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color(0xFF82A6F5),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(Icons.add, color: Colors.white, size: 20),
+          ),
+          title: const Text(
+            '添加新活动',
+            style: TextStyle(
+              fontSize: 16,
+              color: Color(0xFF82A6F5),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          trailing: const Icon(
+            Icons.arrow_forward_ios,
+            color: Color(0xFF82A6F5),
+            size: 16,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 跳转到添加活动页面
+  Future<void> _addNewActivity(int categoryId) async {
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => AddActivityPage(parentId: categoryId),
+      ),
+    );
+
+    // 如果添加成功，result 会返回新添加的活动名称
+    if (result != null && result is String && mounted) {
+      // 刷新活动列表
+      await _fetchActivityList();
+
+      // 选择新添加的活动并关闭弹窗
+      widget.onActivitySelected(result);
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
+}

@@ -1104,7 +1104,7 @@ class _DailyReportTabState extends State<_DailyReportTab>
             CircularProgressIndicator(),
             SizedBox(height: 16),
             Text(
-              'AI分析中，请稍后...',
+              '日报分析需要30秒左右，稍后查看',
               style: TextStyle(fontSize: 16, color: Color(0xFF999999)),
             ),
           ],

@@ -37,6 +37,7 @@ class _RecordPageState extends State<RecordPage> {
   // 未读数据相关
   List<StudentDataConfirmListEntity> _unreadDataList = [];
   Map<int, int> _studentUnreadCount = {}; // 学生ID -> 未读数量
+  Map<int, bool> _studentHasUnknownActivity = {}; // 学生ID -> 是否有未知活动
   int _unknownUnreadCount = 0; // 未知条目的未读数量
   Timer? _fetchUnreadDataTimer; // 延迟拉取未读数据的定时器
   StreamSubscription? _studentDataChangedSubscription; // 学生数据变更事件订阅
@@ -154,6 +155,7 @@ class _RecordPageState extends State<RecordPage> {
 
   void _calculateUnreadCounts() {
     _studentUnreadCount.clear();
+    _studentHasUnknownActivity.clear();
     _unknownUnreadCount = 0;
 
     for (var item in _unreadDataList) {
@@ -164,6 +166,11 @@ class _RecordPageState extends State<RecordPage> {
         // 统计每个学生的未读数量
         _studentUnreadCount[item.studentId!] =
             (_studentUnreadCount[item.studentId!] ?? 0) + 1;
+
+        // 检查活动是否包含"未知"
+        if (item.activity != null && item.activity!.contains('未知')) {
+          _studentHasUnknownActivity[item.studentId!] = true;
+        }
       }
     }
   }
@@ -339,7 +346,7 @@ class _RecordPageState extends State<RecordPage> {
         context.loaderOverlay.hide();
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('上传成功')));
+        ).showSnackBar(const SnackBar(content: Text('提交后台分析需要10秒钟左右，您可继续记录')));
 
         // 删除音频文件
         _deleteAudioFile(filePath);
@@ -448,79 +455,83 @@ class _RecordPageState extends State<RecordPage> {
                 final unreadCount = isUnknown
                     ? _unknownUnreadCount
                     : (_studentUnreadCount[studentId] ?? 0);
+                final hasUnknownActivity =
+                    !isUnknown &&
+                    (_studentHasUnknownActivity[studentId] ?? false);
 
                 return GestureDetector(
                   onTap: () {
-
-                    if(isUnknown){
+                    if (isUnknown) {
                       if (unreadCount > 0) {
                         _onStudentTap(
                           studentId,
                           isUnknown ? null : _studentList![index],
                         );
                       }
-                    }else{
+                    } else {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (context) => StudentDetailPage(studentId: studentId),
+                          builder: (context) =>
+                              StudentDetailPage(studentId: studentId),
                         ),
                       );
                     }
                   },
                   child: Column(
                     children: [
-                      badges.Badge(
-                        position: badges.BadgePosition.bottomEnd(
-                          bottom: -10,
-                          end: -3,
-                        ),
-                        showBadge: unreadCount > 0,
-                        ignorePointer: false,
-                        onTap: () {},
-                        badgeContent: Text(
-                          '$unreadCount',
-                          style: TextStyle(color: Colors.white, fontSize: 12),
-                        ),
-                        badgeStyle: badges.BadgeStyle(
-                          shape: badges.BadgeShape.circle,
-                          badgeColor: getStudentDataColor(
-                            isUnknown ? 0 : _studentList![index].id,
-                          ),
-                          padding: EdgeInsets.all(5),
-                          borderSide: BorderSide(color: Colors.white, width: 2),
-                          elevation: 0,
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(40),
-                          child: isUnknown
-                              ? Container(
-                                  width: _studentWidth,
-                                  height: _studentWidth,
-                                  color: Colors.grey.shade300,
-                                  child: Icon(
-                                    Icons.help_outline,
-                                    size: 40,
-                                    color: Colors.grey,
-                                  ),
-                                )
-                              : CachedNetworkImage(
-                                  imageUrl:
-                                      _studentList![index].studentAvatar ?? "",
-                                  width: _studentWidth,
-                                  height: _studentWidth,
-                                  maxHeightDiskCache: 300,
-                                  maxWidthDiskCache: 300,
-                                  fit: BoxFit.cover,
-                                  placeholder: (context, url) => Container(
-                                    color: Colors.grey.shade300,
-                                    child: Icon(
-                                      Icons.person,
-                                      size: 40,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                  errorWidget: (context, url, error) =>
-                                      Container(
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          badges.Badge(
+                            position: badges.BadgePosition.bottomEnd(
+                              bottom: -10,
+                              end: -3,
+                            ),
+                            showBadge: unreadCount > 0,
+                            ignorePointer: false,
+                            onTap: () {},
+                            badgeContent: Text(
+                              '$unreadCount',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                              ),
+                            ),
+                            badgeStyle: badges.BadgeStyle(
+                              shape: badges.BadgeShape.circle,
+                              badgeColor: getStudentDataColor(
+                                isUnknown ? 0 : _studentList![index].id,
+                              ),
+                              padding: EdgeInsets.all(5),
+                              borderSide: BorderSide(
+                                color: Colors.white,
+                                width: 2,
+                              ),
+                              elevation: 0,
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(40),
+                              child: isUnknown
+                                  ? Container(
+                                      width: _studentWidth,
+                                      height: _studentWidth,
+                                      color: Colors.grey.shade300,
+                                      child: Icon(
+                                        Icons.help_outline,
+                                        size: 40,
+                                        color: Colors.grey,
+                                      ),
+                                    )
+                                  : CachedNetworkImage(
+                                      imageUrl:
+                                          _studentList![index].studentAvatar ??
+                                          "",
+                                      width: _studentWidth,
+                                      height: _studentWidth,
+                                      maxHeightDiskCache: 300,
+                                      maxWidthDiskCache: 300,
+                                      fit: BoxFit.cover,
+                                      placeholder: (context, url) => Container(
                                         color: Colors.grey.shade300,
                                         child: Icon(
                                           Icons.person,
@@ -528,8 +539,42 @@ class _RecordPageState extends State<RecordPage> {
                                           color: Colors.grey,
                                         ),
                                       ),
+                                      errorWidget: (context, url, error) =>
+                                          Container(
+                                            color: Colors.grey.shade300,
+                                            child: Icon(
+                                              Icons.person,
+                                              size: 40,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                    ),
+                            ),
+                          ),
+                          // 未知活动角标（显示在右上角）
+                          if (hasUnknownActivity)
+                            Positioned(
+                              top: 0,
+                              right: 1.5,
+                              child: Container(
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFF9800),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 2,
+                                  ),
                                 ),
-                        ),
+                                child: const Icon(
+                                  Icons.warning_rounded,
+                                  color: Colors.white,
+                                  size: 10,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       SizedBox(height: 4),
                       Container(

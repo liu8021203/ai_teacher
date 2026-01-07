@@ -255,8 +255,8 @@ class _ActivityPageState extends State<ActivityPage>
           ),
         );
 
-        // 如果添加成功，刷新活动列表
-        if (result == true) {
+        // 如果添加成功（返回了活动名称），刷新活动列表
+        if (result != null && result is String) {
           _fetchActivities();
         }
       },
