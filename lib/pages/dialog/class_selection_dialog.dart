@@ -3,6 +3,7 @@ import 'package:ai_teacher/http/core/dio_client.dart';
 import 'package:ai_teacher/http/exception/http_exception.dart';
 import 'package:ai_teacher/http/model/class_list_entity.dart';
 import 'package:ai_teacher/manager/user_manager.dart';
+import 'package:ai_teacher/util/event_bus.dart';
 import 'package:ai_teacher/util/sp_util.dart';
 import 'package:flutter/material.dart';
 
@@ -17,7 +18,6 @@ class _ClassSelectionDialogState extends State<ClassSelectionDialog> {
   // 0: loading, 1: success, 2: fail
   ShowState _showState = ShowLoading();
   List<ClassListEntity>? _classList = null;
-  String _errorMessage = '';
 
   @override
   void initState() {
@@ -71,7 +71,6 @@ class _ClassSelectionDialogState extends State<ClassSelectionDialog> {
               exception.code,
               exception.message,
             );
-            _errorMessage = e.toString();
           });
         }
       }
@@ -80,6 +79,8 @@ class _ClassSelectionDialogState extends State<ClassSelectionDialog> {
 
   Future<void> _onClassSelected(ClassListEntity item) async {
     SPUtil.setString("classId", item.id.toString());
+    // 发送班级切换事件，通知其他页面刷新数据
+    eventBus.fire(ClassChangedEvent());
     if (mounted) {
       Navigator.of(context).pop();
     }
@@ -141,7 +142,7 @@ class _ClassSelectionDialogState extends State<ClassSelectionDialog> {
         constraints: const BoxConstraints(maxHeight: 300),
         child: ListView.separated(
           shrinkWrap: true,
-          itemCount: _classList?.length ?? 0,
+          itemCount: _classList!.length,
           separatorBuilder: (context, index) => const SizedBox(height: 16),
           itemBuilder: (context, index) {
             final item = _classList![index];
@@ -155,7 +156,7 @@ class _ClassSelectionDialogState extends State<ClassSelectionDialog> {
                   borderRadius: BorderRadius.circular(25),
                 ),
                 child: Text(
-                  item.className ?? '',
+                  item.className,
                   style: const TextStyle(
                     fontSize: 18,
                     color: Color(0xFF333333),

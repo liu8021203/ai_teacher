@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:ai_teacher/base/base_stateful_widget.dart';
 import 'package:ai_teacher/http/core/dio_client.dart';
 import 'package:ai_teacher/http/exception/http_exception.dart';
@@ -6,6 +7,7 @@ import 'package:ai_teacher/manager/user_manager.dart';
 import 'package:ai_teacher/pages/dialog/class_selection_dialog.dart';
 import 'package:ai_teacher/pages/login_page.dart';
 import 'package:ai_teacher/pages/student_detail_page.dart';
+import 'package:ai_teacher/util/event_bus.dart';
 import 'package:ai_teacher/util/sp_util.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -22,11 +24,35 @@ class ClassPage extends StatefulWidget {
 class _ClassPageState extends State<ClassPage> {
   ShowState _showState = ShowLoading();
   List<StudentListEntity>? _studentList;
+  StreamSubscription? _studentDataChangedSubscription; // 学生数据变更事件订阅
+  StreamSubscription? _classChangedSubscription; // 班级切换事件订阅
 
   @override
   void initState() {
     super.initState();
     _fetchStudentList();
+
+    // 监听学生数据变更事件
+    _studentDataChangedSubscription = eventBus
+        .on<StudentDataChangedEvent>()
+        .listen((event) {
+          _fetchStudentList();
+        });
+
+    // 监听班级切换事件
+    _classChangedSubscription = eventBus.on<ClassChangedEvent>().listen((
+      event,
+    ) {
+      debugPrint('收到班级切换事件，刷新学生列表');
+      _fetchStudentList();
+    });
+  }
+
+  @override
+  void dispose() {
+    _studentDataChangedSubscription?.cancel();
+    _classChangedSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchStudentList() async {
@@ -177,7 +203,7 @@ class _ClassPageState extends State<ClassPage> {
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (context) => StudentDetailPage(student: item),
+                  builder: (context) => StudentDetailPage(studentId: item.id),
                 ),
               );
             },

@@ -1,10 +1,13 @@
 import 'package:ai_teacher/http/core/dio_client.dart';
+import 'package:ai_teacher/http/exception/http_exception.dart';
 import 'package:ai_teacher/http/model/student_data_confirm_list_entity.dart';
 import 'package:ai_teacher/http/model/student_list_entity.dart';
 import 'package:ai_teacher/manager/user_manager.dart';
 import 'package:ai_teacher/util/sp_util.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:loader_overlay/loader_overlay.dart';
 
 class StudentDataConfirmDialog extends StatefulWidget {
   final StudentListEntity? student;
@@ -30,6 +33,9 @@ class _StudentDataConfirmDialogState extends State<StudentDataConfirmDialog>
   // 存储每个数据项选中的学生
   Map<int, StudentListEntity?> _selectedStudents = {};
 
+  // 本地数据列表副本，用于动态删除
+  late List<StudentDataConfirmListEntity> _localDataList;
+
   @override
   void initState() {
     super.initState();
@@ -39,9 +45,12 @@ class _StudentDataConfirmDialogState extends State<StudentDataConfirmDialog>
       duration: const Duration(milliseconds: 300),
     );
 
+    // 复制数据列表
+    _localDataList = List.from(widget.dataList);
+
     // 初始化选中的学生
     if (widget.student != null) {
-      for (int i = 0; i < widget.dataList.length; i++) {
+      for (int i = 0; i < _localDataList.length; i++) {
         _selectedStudents[i] = widget.student;
       }
     }
@@ -54,30 +63,100 @@ class _StudentDataConfirmDialogState extends State<StudentDataConfirmDialog>
     super.dispose();
   }
 
-  void _sendData() {
-    // TODO: 调用发送接口
-    if (_currentIndex < widget.dataList.length - 1) {
-      // 还有下一条
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
+  Future<void> _sendData() async {
+    if (_currentIndex >= _localDataList.length) return;
+
+    final currentData = _localDataList[_currentIndex];
+
+    try {
+      context.loaderOverlay.show();
+
+      await DioClient().post(
+        '/confirmStudentData',
+        data: {'id': currentData.id},
+        fromJson: (json) => json,
       );
-    } else {
-      // 全部处理完
-      Navigator.of(context).pop(true);
+
+      if (mounted) {
+        context.loaderOverlay.hide();
+        Fluttertoast.showToast(msg: '确认成功');
+
+        // 从列表中移除已确认的数据
+        setState(() {
+          _localDataList.removeAt(_currentIndex);
+          _selectedStudents.remove(_currentIndex);
+        });
+
+        // 检查是否还有数据
+        if (_localDataList.isEmpty) {
+          // 全部处理完
+          Navigator.of(context).pop(true);
+        } else {
+          // 如果当前索引超出范围，调整到最后一个
+          if (_currentIndex >= _localDataList.length) {
+            setState(() {
+              _currentIndex = _localDataList.length - 1;
+            });
+          }
+          // 刷新页面
+          _pageController.jumpToPage(_currentIndex);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        context.loaderOverlay.hide();
+        final message = e is HttpException ? (e.message ?? '确认失败') : '确认失败';
+        Fluttertoast.showToast(msg: message);
+      }
     }
   }
 
-  void _discard() {
-    if (_currentIndex < widget.dataList.length - 1) {
-      // 还有下一条
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
+  Future<void> _discard() async {
+    debugPrint("_discard");
+    if (_currentIndex >= _localDataList.length) return;
+
+    final currentData = _localDataList[_currentIndex];
+
+    try {
+      context.loaderOverlay.show();
+
+      await DioClient().post(
+        '/deleteStudentData',
+        data: {'id': currentData.id},
+        fromJson: (json) => json,
       );
-    } else {
-      // 全部处理完
-      Navigator.of(context).pop(true);
+
+      if (mounted) {
+        context.loaderOverlay.hide();
+        Fluttertoast.showToast(msg: '已删除');
+
+        // 从列表中移除已删除的数据
+        setState(() {
+          _localDataList.removeAt(_currentIndex);
+          _selectedStudents.remove(_currentIndex);
+        });
+
+        // 检查是否还有数据
+        if (_localDataList.isEmpty) {
+          // 全部处理完
+          Navigator.of(context).pop(true);
+        } else {
+          // 如果当前索引超出范围，调整到最后一个
+          if (_currentIndex >= _localDataList.length) {
+            setState(() {
+              _currentIndex = _localDataList.length - 1;
+            });
+          }
+          // 刷新页面
+          _pageController.jumpToPage(_currentIndex);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        context.loaderOverlay.hide();
+        final message = e is HttpException ? (e.message ?? '删除失败') : '删除失败';
+        Fluttertoast.showToast(msg: message);
+      }
     }
   }
 
@@ -121,11 +200,11 @@ class _StudentDataConfirmDialogState extends State<StudentDataConfirmDialog>
         child: PageView.builder(
           controller: _pageController,
           onPageChanged: _onPageChanged,
-          itemCount: widget.dataList.length,
+          itemCount: _localDataList.length,
           itemBuilder: (context, index) {
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: _buildCard(widget.dataList[index], index),
+              child: _buildCard(_localDataList[index], index),
             );
           },
         ),

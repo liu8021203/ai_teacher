@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:ai_teacher/base/base_stateful_widget.dart';
 import 'package:ai_teacher/http/core/dio_client.dart';
 import 'package:ai_teacher/http/exception/http_exception.dart';
 import 'package:ai_teacher/http/model/activity_list_entity.dart';
 import 'package:ai_teacher/manager/user_manager.dart';
+import 'package:ai_teacher/pages/add_activity_page.dart';
 import 'package:ai_teacher/pages/dialog/class_selection_dialog.dart';
+import 'package:ai_teacher/util/event_bus.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -15,25 +18,34 @@ class ActivityPage extends StatefulWidget {
 }
 
 class _ActivityPageState extends State<ActivityPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   ShowState _showState = ShowLoading();
   List<ActivityListEntity> _allActivities = [];
   List<ActivityListEntity> _categories = []; // 一级分类
   String _currentClassName = '';
-  late TabController _tabController;
+  TabController? _tabController; // 改为可空类型
+  StreamSubscription? _classChangedSubscription; // 班级切换事件订阅
 
   @override
   void initState() {
     super.initState();
     _fetchActivities();
     _loadClassName();
+
+    // 监听班级切换事件
+    _classChangedSubscription = eventBus.on<ClassChangedEvent>().listen((
+      event,
+    ) {
+      debugPrint('收到班级切换事件，刷新活动列表');
+      _fetchActivities();
+      _loadClassName();
+    });
   }
 
   @override
   void dispose() {
-    if (_categories.isNotEmpty) {
-      _tabController.dispose();
-    }
+    _tabController?.dispose();
+    _classChangedSubscription?.cancel();
     super.dispose();
   }
 
@@ -68,12 +80,16 @@ class _ActivityPageState extends State<ActivityPage>
           );
 
       if (mounted) {
+        // 保存旧的 TabController 引用
+        final oldController = _tabController;
+
         setState(() {
           _allActivities = list ?? [];
           // 筛选出一级分类（parentId 为 null）
           _categories = _allActivities
               .where((item) => item.parentId == null)
               .toList();
+
           // 初始化 TabController
           if (_categories.isNotEmpty) {
             _tabController = TabController(
@@ -83,8 +99,16 @@ class _ActivityPageState extends State<ActivityPage>
           }
           _showState = ShowSuccess();
         });
+
+        // 在下一帧释放旧的 TabController，避免在渲染过程中释放
+        if (oldController != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            oldController.dispose();
+          });
+        }
       }
     } catch (e) {
+      debugPrint("e : $e");
       if (mounted) {
         if (e is HttpException) {
           setState(() {
@@ -120,7 +144,7 @@ class _ActivityPageState extends State<ActivityPage>
         itemBuilder: (context, index) {
           // 第一个是添加活动卡片
           if (index == 0) {
-            return _buildAddActivityCard();
+            return _buildAddActivityCard(categoryId);
           }
 
           final activity = activities[index - 1];
@@ -176,60 +200,65 @@ class _ActivityPageState extends State<ActivityPage>
       child: Column(
         children: [
           // 顶部分类Tab栏
-          Container(
-            color: Color(0xFFF2F5FF),
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              indicatorSize: TabBarIndicatorSize.label,
+          if (_tabController != null)
+            Container(
+              color: Color(0xFFF2F5FF),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: TabBar(
+                controller: _tabController!,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                indicatorSize: TabBarIndicatorSize.label,
 
-              indicator: BoxDecoration(
-                color: Colors.transparent,
+                indicator: BoxDecoration(color: Colors.transparent),
+                dividerColor: Colors.transparent,
+                labelColor: Color(0xFF7EA1FF),
+                unselectedLabelColor: const Color(0xFF212121),
+                labelStyle: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+                unselectedLabelStyle: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                ),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 12),
+                tabs: _categories.map((category) {
+                  return Tab(child: Text(category.categoryTitle));
+                }).toList(),
               ),
-              dividerColor: Colors.transparent,
-              labelColor: Color(0xFF7EA1FF),
-              unselectedLabelColor: const Color(0xFF212121),
-              labelStyle: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
-              unselectedLabelStyle: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-              ),
-              labelPadding: const EdgeInsets.symmetric(horizontal: 12),
-              tabs: _categories.map((category) {
-                return Tab(
-                  child: Text(category.categoryTitle),
-                );
-              }).toList(),
             ),
-          ),
 
           // TabBarView - 可滑动的内容区域
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: _categories.map((category) {
-                return _buildCategoryContent(category.id);
-              }).toList(),
+          if (_tabController != null)
+            Expanded(
+              child: TabBarView(
+                controller: _tabController!,
+                children: _categories.map((category) {
+                  return _buildCategoryContent(category.id);
+                }).toList(),
+              ),
             ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildAddActivityCard() {
+  Widget _buildAddActivityCard(int categoryId) {
     return GestureDetector(
-      onTap: () {
-        // TODO: 添加活动
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('添加活动功能待实现')));
+      onTap: () async {
+        // 跳转到添加活动页面
+        final result = await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => AddActivityPage(parentId: categoryId),
+          ),
+        );
+
+        // 如果添加成功，刷新活动列表
+        if (result == true) {
+          _fetchActivities();
+        }
       },
       child: Container(
         decoration: BoxDecoration(

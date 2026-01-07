@@ -21,7 +21,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.shenghui.ai.teacher.ai_teacher"
+        applicationId = "com.sh.edu.teacher"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -30,8 +30,33 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release"){
+            storeFile = file("teacher.jks") // keystore 文件路径
+            storePassword = "123456"
+            keyAlias = "key0"
+            keyPassword = "123456"
+        }
+
+        getByName("debug"){
+            storeFile = file("teacher.jks") // keystore 文件路径
+            storePassword = "123456"
+            keyAlias = "key0"
+            keyPassword = "123456"
+        }
+
+    }
+
     buildTypes {
         release {
+            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+
+        debug {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")

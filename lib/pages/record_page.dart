@@ -1,12 +1,13 @@
+import 'dart:async';
 import 'dart:io';
-import 'package:ai_teacher/base/base_stateful_widget.dart';
 import 'package:ai_teacher/http/core/dio_client.dart';
-import 'package:ai_teacher/http/exception/http_exception.dart';
 import 'package:ai_teacher/http/model/student_data_confirm_list_entity.dart';
 import 'package:ai_teacher/http/model/student_list_entity.dart';
 import 'package:ai_teacher/manager/user_manager.dart';
 import 'package:ai_teacher/pages/dialog/student_data_confirm_dialog.dart';
+import 'package:ai_teacher/pages/student_detail_page.dart';
 import 'package:ai_teacher/util/app_util.dart';
+import 'package:ai_teacher/util/event_bus.dart';
 import 'package:ai_teacher/util/sp_util.dart';
 import 'package:badges/badges.dart' as badges;
 import 'package:cached_network_image/cached_network_image.dart';
@@ -25,46 +26,71 @@ class RecordPage extends StatefulWidget {
 }
 
 class _RecordPageState extends State<RecordPage> {
-  ShowState _studentShowState = ShowLoading();
   List<StudentListEntity>? _studentList = null;
   double _studentWidth = 0;
   double _studentHeight = 0;
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
-  String? _recordedFilePath;
+  bool _isCancelling = false; // 是否正在取消录音状态
 
   // 未读数据相关
   List<StudentDataConfirmListEntity> _unreadDataList = [];
   Map<int, int> _studentUnreadCount = {}; // 学生ID -> 未读数量
   int _unknownUnreadCount = 0; // 未知条目的未读数量
+  Timer? _fetchUnreadDataTimer; // 延迟拉取未读数据的定时器
+  StreamSubscription? _studentDataChangedSubscription; // 学生数据变更事件订阅
+  StreamSubscription? _dailyAnalyzeStartedSubscription; // 日报分析开始事件订阅
+  StreamSubscription? _classChangedSubscription; // 班级切换事件订阅
 
   @override
   void initState() {
     super.initState();
     _fetchStudentList();
     _fetchUnreadData();
+
+    // 监听学生数据变更事件
+    _studentDataChangedSubscription = eventBus
+        .on<StudentDataChangedEvent>()
+        .listen((event) {
+          _fetchStudentList();
+          _fetchUnreadData();
+        });
+
+    // 监听日报分析开始事件
+    _dailyAnalyzeStartedSubscription = eventBus
+        .on<DailyAnalyzeStartedEvent>()
+        .listen((event) {
+          debugPrint('收到日报分析开始事件，刷新未读数据');
+          _fetchUnreadData();
+        });
+
+    // 监听班级切换事件
+    _classChangedSubscription = eventBus.on<ClassChangedEvent>().listen((
+      event,
+    ) {
+      debugPrint('收到班级切换事件，刷新学生列表和未读数据');
+      _fetchStudentList();
+      _fetchUnreadData();
+    });
   }
 
   @override
   void dispose() {
     _audioRecorder.dispose();
+    _fetchUnreadDataTimer?.cancel();
+    _studentDataChangedSubscription?.cancel();
+    _dailyAnalyzeStartedSubscription?.cancel();
+    _classChangedSubscription?.cancel();
     super.dispose();
   }
 
   Future<void> _fetchStudentList() async {
-    setState(() {
-      _studentShowState = ShowLoading();
-    });
-
     try {
       final String? classId = SPUtil.getString('classId', defaultValue: null);
       debugPrint("classId : $classId");
 
       if (classId == null) {
-        setState(() {
-          _studentShowState = ShowSuccess();
-        });
         return;
       }
 
@@ -87,21 +113,10 @@ class _RecordPageState extends State<RecordPage> {
       if (mounted) {
         setState(() {
           _studentList = list;
-          _studentShowState = ShowSuccess();
         });
       }
     } catch (e) {
-      HttpException? exception = e as HttpException?;
-      if (exception != null) {
-        if (mounted) {
-          setState(() {
-            _studentShowState = ShowNetworkErrorView(
-              exception.code,
-              exception.message,
-            );
-          });
-        }
-      }
+      debugPrint('获取学生列表失败: $e');
     }
   }
 
@@ -226,7 +241,6 @@ class _RecordPageState extends State<RecordPage> {
 
       setState(() {
         _isRecording = true;
-        _recordedFilePath = filePath;
       });
 
       debugPrint('开始录音: $filePath');
@@ -245,6 +259,7 @@ class _RecordPageState extends State<RecordPage> {
       final path = await _audioRecorder.stop();
       setState(() {
         _isRecording = false;
+        _isCancelling = false;
       });
 
       debugPrint('录音结束: $path');
@@ -256,6 +271,41 @@ class _RecordPageState extends State<RecordPage> {
       debugPrint('停止录音失败: $e');
       setState(() {
         _isRecording = false;
+        _isCancelling = false;
+      });
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    if (!_isRecording) return;
+
+    try {
+      final path = await _audioRecorder.stop();
+      setState(() {
+        _isRecording = false;
+        _isCancelling = false;
+      });
+
+      debugPrint('录音已取消: $path');
+
+      // 删除录音文件
+      if (path != null && path.isNotEmpty) {
+        _deleteAudioFile(path);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('录音已取消'),
+            duration: Duration(milliseconds: 1500),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('取消录音失败: $e');
+      setState(() {
+        _isRecording = false;
+        _isCancelling = false;
       });
     }
   }
@@ -293,6 +343,9 @@ class _RecordPageState extends State<RecordPage> {
 
         // 删除音频文件
         _deleteAudioFile(filePath);
+
+        // 启动延迟拉取未读数据的定时器（30秒后执行）
+        _startFetchUnreadDataTimer();
       }
     } catch (e) {
       if (mounted) {
@@ -345,6 +398,19 @@ class _RecordPageState extends State<RecordPage> {
     }
   }
 
+  void _startFetchUnreadDataTimer() {
+    // 如果已有定时器在运行，先取消
+    _fetchUnreadDataTimer?.cancel();
+
+    // 创建新的30秒定时器
+    _fetchUnreadDataTimer = Timer(const Duration(seconds: 10), () {
+      debugPrint('10秒后自动拉取未读数据');
+      _fetchUnreadData();
+    });
+
+    debugPrint('启动10秒延迟拉取未读数据定时器');
+  }
+
   @override
   Widget build(BuildContext context) {
     _studentWidth = (MediaQuery.of(context).size.width - 16 - 12 * 4) / 9 * 2;
@@ -385,10 +451,19 @@ class _RecordPageState extends State<RecordPage> {
 
                 return GestureDetector(
                   onTap: () {
-                    if (unreadCount > 0) {
-                      _onStudentTap(
-                        studentId,
-                        isUnknown ? null : _studentList![index],
+
+                    if(isUnknown){
+                      if (unreadCount > 0) {
+                        _onStudentTap(
+                          studentId,
+                          isUnknown ? null : _studentList![index],
+                        );
+                      }
+                    }else{
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => StudentDetailPage(studentId: studentId),
+                        ),
                       );
                     }
                   },
@@ -408,7 +483,9 @@ class _RecordPageState extends State<RecordPage> {
                         ),
                         badgeStyle: badges.BadgeStyle(
                           shape: badges.BadgeShape.circle,
-                          badgeColor: Colors.red,
+                          badgeColor: getStudentDataColor(
+                            isUnknown ? 0 : _studentList![index].id,
+                          ),
                           padding: EdgeInsets.all(5),
                           borderSide: BorderSide(color: Colors.white, width: 2),
                           elevation: 0,
@@ -478,45 +555,57 @@ class _RecordPageState extends State<RecordPage> {
             ),
           ),
 
-          // 顶部提示文字
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.only(top: 40, left: 20, right: 20),
-            child: Text(
-              _isRecording ? '录音中...' : '请说出记录内容',
-              style: TextStyle(
-                fontSize: 24,
-                color: _isRecording
-                    ? const Color(0xFFFF6B6B)
-                    : const Color(0xFF333333),
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-
           const Spacer(flex: 2),
 
-          // 中间点状装饰条
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: List.generate(25, (index) {
-                return Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: _isRecording
+          // 取消录音区域（录音时显示在按钮上方）
+          if (_isRecording)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 40),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: _isCancelling
+                      ? const Color(0xFFFF6B6B)
+                      : const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(30),
+                  border: Border.all(
+                    color: _isCancelling
                         ? const Color(0xFFFF6B6B)
-                        : const Color(0xFF82A6F5),
-                    shape: BoxShape.circle,
+                        : const Color(0xFFE0E0E0),
+                    width: 2,
                   ),
-                );
-              }),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.cancel_outlined,
+                      color: _isCancelling
+                          ? Colors.white
+                          : const Color(0xFF999999),
+                      size: 24,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '上移取消',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: _isCancelling
+                            ? Colors.white
+                            : const Color(0xFF999999),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
 
-          const Spacer(flex: 3),
+          if (!_isRecording) const Spacer(flex: 1),
 
           // 底部录音按钮区域
           Column(
@@ -524,7 +613,48 @@ class _RecordPageState extends State<RecordPage> {
               // 蓝色圆形按钮
               GestureDetector(
                 onLongPressStart: (_) => _startRecording(),
-                onLongPressEnd: (_) => _stopRecording(),
+                onLongPressMoveUpdate: (details) {
+                  if (!_isRecording) return;
+
+                  // 获取全局坐标
+                  final globalPosition = details.globalPosition;
+
+                  // 计算取消区域的位置
+                  // 取消按钮在屏幕中间偏上的位置
+                  final screenHeight = MediaQuery.of(context).size.height;
+                  final screenWidth = MediaQuery.of(context).size.width;
+
+                  // 取消区域的大致位置（根据UI布局估算）
+                  // 距离顶部约 40-50% 的位置
+                  final cancelAreaTop = screenHeight * 0.35;
+                  final cancelAreaBottom = screenHeight * 0.5;
+                  final cancelAreaLeft = screenWidth * 0.2;
+                  final cancelAreaRight = screenWidth * 0.8;
+
+                  // 判断手指是否在取消区域内
+                  final isInCancelArea =
+                      globalPosition.dy >= cancelAreaTop &&
+                      globalPosition.dy <= cancelAreaBottom &&
+                      globalPosition.dx >= cancelAreaLeft &&
+                      globalPosition.dx <= cancelAreaRight;
+
+                  if (isInCancelArea && !_isCancelling) {
+                    setState(() {
+                      _isCancelling = true;
+                    });
+                  } else if (!isInCancelArea && _isCancelling) {
+                    setState(() {
+                      _isCancelling = false;
+                    });
+                  }
+                },
+                onLongPressEnd: (_) {
+                  if (_isCancelling) {
+                    _cancelRecording();
+                  } else {
+                    _stopRecording();
+                  }
+                },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: _isRecording ? 174 : 154,
@@ -547,21 +677,22 @@ class _RecordPageState extends State<RecordPage> {
                     ],
                   ),
                   child: Icon(
-                    _isRecording ? Icons.stop : Icons.mic,
+                    Icons.mic,
                     color: Colors.white,
                     size: _isRecording ? 50 : 40,
                   ),
                 ),
               ),
               const SizedBox(height: 34),
-              // 底部文字
-              const Text(
-                '长按按钮\n进行观察记录',
+              // 底部文字（保持两行避免布局跳动）
+              Text(
+                _isRecording ? '松开\n发送' : '长按按钮\n进行观察记录',
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 14,
                   color: Color(0xFF2E2E2E),
                   fontWeight: FontWeight.w400,
+                  height: 1.4, // 行高
                 ),
               ),
             ],
@@ -570,5 +701,18 @@ class _RecordPageState extends State<RecordPage> {
         ],
       ),
     );
+  }
+
+  Color getStudentDataColor(int studentId) {
+    int count = _studentUnreadCount[studentId] ?? 0;
+    if (count < 5) {
+      return Color(0xFF44588D);
+    } else if (count >= 5 && count < 10) {
+      return Color(0xFF7EA1FF);
+    } else if (count >= 10) {
+      return Color(0xFFBED0FF);
+    } else {
+      return Color(0xFF44588D);
+    }
   }
 }

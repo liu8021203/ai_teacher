@@ -2,6 +2,7 @@ import 'package:ai_teacher/manager/user_manager.dart';
 import 'package:ai_teacher/pages/main_page.dart';
 import 'package:ai_teacher/util/sp_util.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:loader_overlay/loader_overlay.dart';
 import 'pages/login_page.dart';
@@ -45,6 +46,20 @@ class MyApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF82A6F5)),
           useMaterial3: true,
         ),
+        // ✅ 关键配置
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,    // Material组件中文
+          GlobalCupertinoLocalizations.delegate,   // Cupertino组件中文
+          GlobalWidgetsLocalizations.delegate,     // Widgets中文
+        ],
+
+        // ✅ 只支持中文
+        supportedLocales: const [
+          Locale('zh', 'CN'),  // 简体中文
+        ],
+
+        // ✅ 固定为中文
+        locale: const Locale('zh', 'CN'),
         home: UserManager().isLogin() ? MainPage() : const LoginPage(),
       ),
     );
