@@ -221,7 +221,7 @@ class _StudentDetailPageState extends State<StudentDetailPage>
 
   Color _getActivityTitleColorByParentId(int? parentId) {
     if (parentId == null) {
-      return const Color(0xFFB1600A); // 默认颜色
+      return const Color(0xFFA51E16); // 默认颜色
     }
 
     switch (parentId) {
@@ -295,7 +295,7 @@ class _StudentDetailPageState extends State<StudentDetailPage>
   }
 
   void _showStudentInfoDialog() {
-    if(_currentStudent == null){
+    if (_currentStudent == null) {
       return;
     }
     showDialog(
@@ -538,6 +538,18 @@ class _StudentDetailPageState extends State<StudentDetailPage>
                       data.activity ?? '未知活动',
                       style: TextStyle(fontSize: 12, color: activityTitleColor),
                     ),
+                    if(data.activity?.contains("未知") == true)...[
+                      SizedBox(width: 4,),
+                      Container(
+                        clipBehavior: Clip.hardEdge,
+                        decoration: BoxDecoration(
+                          color: Color(0xFFA51E16),
+                          shape: BoxShape.circle
+                        ),
+                        padding: EdgeInsets.all(4),
+                        child: Text("?", style: TextStyle(fontSize: 8, color: Colors.white),),
+                      )
+                    ],
                     const Spacer(),
                     Text(
                       _formatTime(data.createDate),
@@ -614,13 +626,13 @@ class _StudentDetailPageState extends State<StudentDetailPage>
   ) {
     return GestureDetector(
       onTap: onTap,
-      child: Row(
+      child: Padding(padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2), child: Row(
         children: [
           Image.asset(icon, width: 20, height: 20),
           const SizedBox(width: 4),
           Text(label, style: TextStyle(fontSize: 12, color: color)),
         ],
-      ),
+      ),),
     );
   }
 
@@ -907,7 +919,15 @@ class _DailyReportTabState extends State<_DailyReportTab>
   void initState() {
     super.initState();
     _activityTabController = TabController(length: 0, vsync: this);
-    _fetchDailyAnalyzeStatus();
+    _fetchDailyReport();
+  }
+
+  // 判断日期是否为今天
+  bool _isToday(DateTime date) {
+    final now = DateTime.now();
+    return date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
   }
 
   @override
@@ -915,7 +935,46 @@ class _DailyReportTabState extends State<_DailyReportTab>
     super.didUpdateWidget(oldWidget);
     // 当日期变化时重新获取状态
     if (oldWidget.selectedDate != widget.selectedDate) {
-      _fetchDailyAnalyzeStatus();
+      // 取消之前的定时器（避免定时器在切换日期后触发）
+      _statusCheckTimer?.cancel();
+      _statusCheckTimer = null;
+
+      // 如果正在编辑，退出编辑模式
+      if (_isEditing) {
+        setState(() {
+          _isEditing = false;
+          for (var controller in _editControllers.values) {
+            controller.dispose();
+          }
+          _editControllers.clear();
+        });
+      }
+
+      _fetchDailyReport();
+    }
+  }
+
+  // 获取日报数据（根据日期决定调用逻辑）
+  Future<void> _fetchDailyReport() async {
+    if (_isToday(widget.selectedDate)) {
+      // 如果是今天，先调用 dailyAnalyzeStatus 获取状态
+      debugPrint('选择的日期是今天，先获取状态');
+      await _fetchDailyAnalyzeStatus();
+    } else {
+      // 如果不是今天，直接调用 dailyAnalyzeData
+      debugPrint('选择的日期不是今天，直接获取数据');
+      setState(() {
+        _isLoading = true;
+        _analyzeData = null;
+      });
+      await _fetchDailyAnalyzeData();
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          // 如果有数据，设置状态为4（已分析）
+          _analyzeStatus = _analyzeData != null ? 4 : 1;
+        });
+      }
     }
   }
 
@@ -957,8 +1016,13 @@ class _DailyReportTabState extends State<_DailyReportTab>
 
         debugPrint('当前状态: $_analyzeStatus');
 
+        // 如果状态为2（分析中），启动定时器定期检查状态
+        if (_analyzeStatus == 2) {
+          debugPrint('状态为 2（分析中），启动定时器定期检查');
+          _startStatusCheckTimer();
+        }
         // 如果状态为3或4，获取分析数据
-        if (_analyzeStatus == 3 || _analyzeStatus == 4) {
+        else if (_analyzeStatus == 3 || _analyzeStatus == 4) {
           debugPrint('状态为 $_analyzeStatus，开始获取日报数据');
           _fetchDailyAnalyzeData();
         } else {
@@ -978,13 +1042,16 @@ class _DailyReportTabState extends State<_DailyReportTab>
 
   Future<void> _fetchDailyAnalyzeData() async {
     try {
+      final dateStr = DateFormat('yyyy-MM-dd').format(widget.selectedDate);
       debugPrint('===== 开始获取日报数据 =====');
-      debugPrint('调用 /dailyAnalyzeData, studentId: ${widget.studentId}');
+      debugPrint(
+        '调用 /dailyAnalyzeData, studentId: ${widget.studentId}, date: $dateStr',
+      );
 
       DailyAnalyzeResultEntity? data = await DioClient()
           .post<DailyAnalyzeResultEntity>(
             '/dailyAnalyzeData',
-            data: {'studentId': widget.studentId},
+            data: {'studentId': widget.studentId, 'date': dateStr},
             fromJson: (json) {
               debugPrint('日报数据原始JSON: $json');
               return json == null
@@ -1008,12 +1075,25 @@ class _DailyReportTabState extends State<_DailyReportTab>
           // 更新TabController
           final activityCount = data.analyzeData?.length ?? 0;
           debugPrint('更新 TabController, 活动数量: $activityCount');
+
+          // 保存当前选中的活动索引
+          final previousIndex = _selectedActivityIndex;
+
           _activityTabController.dispose();
           _activityTabController = TabController(
             length: activityCount,
             vsync: this,
           );
-          _selectedActivityIndex = 0;
+
+          // 恢复之前的索引（如果该索引仍然有效）
+          if (previousIndex < activityCount) {
+            _selectedActivityIndex = previousIndex;
+            _activityTabController.index = previousIndex;
+          } else {
+            _selectedActivityIndex = 0;
+          }
+
+          debugPrint('恢复活动索引: $_selectedActivityIndex');
         });
         debugPrint('日报数据设置完成，_analyzeData != null: ${_analyzeData != null}');
       } else {
@@ -1026,6 +1106,12 @@ class _DailyReportTabState extends State<_DailyReportTab>
   }
 
   Future<void> _startAnalyze() async {
+    // 只有今天才能进行分析
+    if (!_isToday(widget.selectedDate)) {
+      Fluttertoast.showToast(msg: '只能对今天的数据进行分析');
+      return;
+    }
+
     try {
       context.loaderOverlay.show();
 
@@ -1067,7 +1153,7 @@ class _DailyReportTabState extends State<_DailyReportTab>
     _statusCheckTimer = Timer(const Duration(seconds: 10), () {
       if (mounted) {
         debugPrint('定时器触发：开始检查日报状态');
-        _fetchDailyAnalyzeStatus();
+        _fetchDailyReport();
       }
     });
   }
@@ -1129,6 +1215,18 @@ class _DailyReportTabState extends State<_DailyReportTab>
   }
 
   Widget _buildAnalyzeView() {
+    final isToday = _isToday(widget.selectedDate);
+
+    // 如果不是今天且状态为3，说明历史数据为空
+    if (!isToday && _analyzeStatus == 3) {
+      return const Center(
+        child: Text(
+          '暂无数据',
+          style: TextStyle(fontSize: 16, color: Color(0xFF999999)),
+        ),
+      );
+    }
+
     // 格式化日期
     String weekday = '';
     switch (widget.selectedDate.weekday) {
@@ -1226,35 +1324,40 @@ class _DailyReportTabState extends State<_DailyReportTab>
 
           const SizedBox(height: 40),
 
-          // 提示文字
-          const Text(
-            '每日下午7点自动分析',
-            style: TextStyle(fontSize: 14, color: Color(0xFF999999)),
-          ),
+          // 提示文字（只在今天显示）
+          if (isToday)
+            const Text(
+              '每日下午7点自动分析',
+              style: TextStyle(fontSize: 14, color: Color(0xFF999999)),
+            ),
 
           const SizedBox(height: 20),
 
-          // 立即分析按钮
-          ElevatedButton(
-            onPressed: _startAnalyze,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFBED0FF),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(60),
+          // 立即分析按钮（只在今天显示）
+          if (isToday)
+            ElevatedButton(
+              onPressed: _startAnalyze,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFBED0FF),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 14,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(60),
+                ),
+                elevation: 0,
+                side: BorderSide(color: Color(0xFF7EA1FF), width: 2),
               ),
-              elevation: 0,
-              side: BorderSide(color: Color(0xFF7EA1FF), width: 2),
-            ),
-            child: const Text(
-              '立即分析',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.black,
-                fontWeight: FontWeight.w400,
+              child: const Text(
+                '立即分析',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.black,
+                  fontWeight: FontWeight.w400,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -1457,6 +1560,8 @@ class _DailyReportTabState extends State<_DailyReportTab>
 
   // 构建悬浮按钮
   Widget _buildFloatingButtons() {
+    final isToday = _isToday(widget.selectedDate);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
@@ -1464,7 +1569,8 @@ class _DailyReportTabState extends State<_DailyReportTab>
         children: [
           if (_analyzeStatus == 4) ...[
             // 编辑/保存按钮
-            Expanded(
+            SizedBox(
+              width: (MediaQuery.of(context).size.width - 32 - 12) / 2,
               child: ElevatedButton(
                 onPressed: _isEditing ? _saveData : _enterEditMode,
                 style: ElevatedButton.styleFrom(
@@ -1489,16 +1595,47 @@ class _DailyReportTabState extends State<_DailyReportTab>
                 ),
               ),
             ),
-            const SizedBox(width: 12),
 
-            // 继续分析按钮
-            Expanded(
+            // 继续分析按钮（只在今天显示）
+            if (isToday) ...[
+              const SizedBox(width: 12),
+              SizedBox(
+                width: (MediaQuery.of(context).size.width - 32 - 12) / 2,
+                child: ElevatedButton(
+                  onPressed: _startAnalyze,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFBED0FF),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(60),
+                    ),
+                    elevation: 4,
+                    side: BorderSide(color: Color(0xFF7EA1FF), width: 2),
+                  ),
+                  child: const Text(
+                    '继续分析',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.black,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ] else if (_analyzeStatus == 3 && _analyzeData != null) ...[
+            // 编辑/保存按钮（状态3且有数据）
+            SizedBox(
+              width: (MediaQuery.of(context).size.width - 32 - 12) / 2,
               child: ElevatedButton(
-                onPressed: _startAnalyze,
+                onPressed: _isEditing ? _saveData : _enterEditMode,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFBED0FF),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
+                    horizontal: 60,
                     vertical: 14,
                   ),
                   shape: RoundedRectangleBorder(
@@ -1507,38 +1644,13 @@ class _DailyReportTabState extends State<_DailyReportTab>
                   elevation: 4,
                   side: BorderSide(color: Color(0xFF7EA1FF), width: 2),
                 ),
-                child: const Text(
-                  '继续分析',
+                child: Text(
+                  _isEditing ? '保存' : '编辑',
                   style: TextStyle(
                     fontSize: 14,
                     color: Colors.black,
                     fontWeight: FontWeight.w400,
                   ),
-                ),
-              ),
-            ),
-          ] else ...[
-            // 立即分析按钮（状态3）
-            ElevatedButton(
-              onPressed: _isEditing ? _saveData : _enterEditMode,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFBED0FF),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 60,
-                  vertical: 14,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(60),
-                ),
-                elevation: 4,
-                side: BorderSide(color: Color(0xFF7EA1FF), width: 2),
-              ),
-              child: Text(
-                _isEditing ? '保存' : '编辑',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.black,
-                  fontWeight: FontWeight.w400,
                 ),
               ),
             ),
@@ -1573,6 +1685,7 @@ class _DailyReportTabState extends State<_DailyReportTab>
           {'key': 'persist', 'value': currentActivity.persist},
           {'key': 'repeat', 'value': currentActivity.repeat},
           {'key': 'sequence', 'value': currentActivity.sequence},
+          {'key': 'speech', 'value': currentActivity.speech},
           {'key': 'work_dur', 'value': currentActivity.work_dur},
           {'key': 'work_selection', 'value': currentActivity.work_selection},
           {'key': 'work_style', 'value': currentActivity.work_style},
@@ -1603,10 +1716,7 @@ class _DailyReportTabState extends State<_DailyReportTab>
           _analyzeData!.analyzeData![_selectedActivityIndex];
 
       // 构建保存的数据
-      Map<String, dynamic> saveData = {
-        'studentId': widget.studentId,
-        'summary_id': currentActivity.summary_id,
-      };
+      Map<String, dynamic> saveData = {'id': currentActivity.id};
 
       // 添加所有编辑的字段
       _editControllers.forEach((key, controller) {
@@ -1669,6 +1779,7 @@ class _DailyReportTabState extends State<_DailyReportTab>
       {'key': 'persist', 'label': '坚持', 'value': activityData.persist},
       {'key': 'repeat', 'label': '重复', 'value': activityData.repeat},
       {'key': 'sequence', 'label': '顺序', 'value': activityData.sequence},
+      {'key': 'speech', 'label': '内容', 'value': activityData.speech},
       {'key': 'work_dur', 'label': '工作时长', 'value': activityData.work_dur},
       {
         'key': 'work_selection',

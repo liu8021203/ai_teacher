@@ -16,13 +16,13 @@ class DailyAnalyzeListEntity {
   late String? operation;
   late String? paralanguage;
   late String? persist;
-  late  String? repeat;
-  late  String? sequence;
-  late  String? social;
-  late  String? work_dur;
-  late  String? work_selection;
-  late  String? work_style;
-
+  late String? repeat;
+  late String? sequence;
+  late String? social;
+  late String? speech;
+  late String? work_dur;
+  late String? work_selection;
+  late String? work_style;
 
   DailyAnalyzeListEntity({
     required this.summary_id,
@@ -39,12 +39,14 @@ class DailyAnalyzeListEntity {
     this.repeat,
     this.sequence,
     this.social,
+    this.speech,
     this.work_dur,
     this.work_selection,
-    this.work_style
+    this.work_style,
   });
 
-  factory DailyAnalyzeListEntity.fromJson(Map<String, dynamic> json) => _$DailyAnalyzeListEntityFromJson(json);
+  factory DailyAnalyzeListEntity.fromJson(Map<String, dynamic> json) =>
+      _$DailyAnalyzeListEntityFromJson(json);
 
   Map<String, dynamic> toJson() => _$DailyAnalyzeListEntityToJson(this);
 }
